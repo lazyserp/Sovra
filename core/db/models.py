@@ -63,3 +63,26 @@ class DeploymentRecord(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
     )
+
+class ApiKeyRecord(Base):
+    """Represents an API authentication key for accessing Sovra AI endpoints."""
+    __tablename__ = "api_keys"
+
+    id: Mapped[str] = mapped_column(
+        String,
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    key_hash: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    prefix: Mapped[str] = mapped_column(String, nullable=False)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
