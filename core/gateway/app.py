@@ -1,42 +1,57 @@
 import httpx
-from fastapi import FastAPI,HTTPException,status
+from fastapi import Depends, FastAPI, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from core.db.models import DeploymentRecord
+from core.db.session import get_db
 from core.gateway.schema import ChatCompletionRequest
-from core.models.specs import QWEN_0_5B_SPEC
 
-app = FastAPI(title="Sovra AI Gateway",version="0.1.0")
+app = FastAPI(title="Sovra AI Gateway", version="0.1.0")
 
-# Active deployment registry mapping model_id -> backend engine URL
-ACTIVE_MODELS: dict[str, str] = {
-    QWEN_0_5B_SPEC.id: "http://localhost:8000",
-}
 
 @app.get("/health")
 async def health():
-    """Gateway health check"""
-    return {"status": "healthy",  "service": "sovra-gateway"}
+    """Gateway health check."""
+    return {"status": "healthy", "service": "sovra-gateway"}
 
 
 @app.get("/v1/models")
-async def list_models():
-    """OpenAI-compatible model list endpoint"""
-    return{
+def list_models(db: Session = Depends(get_db)):
+    """List all models currently running in the database."""
+    stmt = select(DeploymentRecord.model_id).where(DeploymentRecord.status == "running")
+    active_models = db.scalars(stmt).all()
+    return {
         "object": "list",
-        "data": [ {"id": model_id, "object": "model", "owned_by": "sovra"} for model_id in ACTIVE_MODELS ],
+        "data": [
+            {"id": model_id, "object": "model", "owned_by": "sovra"}
+            for model_id in active_models
+        ],
     }
 
+
 @app.post("/v1/chat/completions")
-async def chat_completions(request: ChatCompletionRequest):
-    """Route chat completion requests to the active inference engine."""
-    #Model validation
-    if request.model not in ACTIVE_MODELS:
+async def chat_completions(
+    request: ChatCompletionRequest,
+    db: Session = Depends(get_db),
+):
+    """Route chat completions dynamically to the active engine port from the database."""
+    #  Look up in the database: Is this model currently running?
+    stmt = select(DeploymentRecord).where(
+        DeploymentRecord.model_id == request.model,
+        DeploymentRecord.status == "running",
+    )
+    deployment = db.scalar(stmt)
+
+    if not deployment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Model '{request.model}' is not registered or deployed in Sovra.",
+            detail=f"Model '{request.model}' is not currently running in Sovra.",
         )
-        
-    backend_url = f"{ACTIVE_MODELS[request.model]}/v1/chat/completions"
 
-    #  Proxy forward to inference engine
+    backend_url = f"http://localhost:{deployment.port}/v1/chat/completions"
+
+    #  Proxy forward to the engine port
     async with httpx.AsyncClient(timeout=60.0) as client:
         try:
             response = await client.post(
@@ -47,5 +62,5 @@ async def chat_completions(request: ChatCompletionRequest):
         except httpx.ConnectError:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"Inference engine for '{request.model}' is unreachable.",
+                detail=f"Inference engine for '{request.model}' on port {deployment.port} is unreachable.",
             )
