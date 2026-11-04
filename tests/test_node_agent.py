@@ -67,3 +67,4 @@ def test_agent_live_hardware_inspection():
     assert len(payload.hostname) > 0
     assert payload.ip_address != ""
     assert payload.total_vram_mb == 4096
+
