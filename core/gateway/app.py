@@ -3,11 +3,36 @@ from fastapi import Depends, FastAPI, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from core.db.models import DeploymentRecord
 from core.db.session import get_db
 from core.gateway.schema import ChatCompletionRequest
 
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from core.db.models import ApiKeyRecord, DeploymentRecord
+from core.security.keys import verify_api_key
+
+bearer_scheme = HTTPBearer(auto_error=False)
+
 app = FastAPI(title="Sovra AI Gateway", version="0.1.0")
+
+
+def get_current_api_key(credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme) , db: Session = Depends(get_db)) -> ApiKeyRecord:
+    """Enforce API key authentication via Bearer token."""
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or malformed Authorization header. Expected 'Bearer <api_key>'.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    api_key_record = verify_api_key(credentials.credentials,db)
+    if not api_key_record:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid, revoked, or expired API key.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return api_key_record
 
 
 @app.get("/health")
@@ -33,6 +58,7 @@ def list_models(db: Session = Depends(get_db)):
 @app.post("/v1/chat/completions")
 async def chat_completions(
     request: ChatCompletionRequest,
+    api_key: ApiKeyRecord = Depends(get_current_api_key),
     db: Session = Depends(get_db),
 ):
     """Route chat completions dynamically to the active engine port from the database."""
