@@ -13,3 +13,9 @@ class NodeRegisterRequest(BaseModel):
 class NodeHeartbeatRequest(BaseModel):
     free_vram_mb: int
     status: str = "online"
+
+
+class DeploymentCreateRequest(BaseModel):
+    model_id : str
+    node_id : str
+    port: int | None = None
