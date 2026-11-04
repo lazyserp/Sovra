@@ -1,5 +1,6 @@
+from core.preflight.models import CheckItem,PreflightResult
 import subprocess
-from core.preflight.models import CheckItem
+import shutil
 
 
 def check_docker(timeout: int = 5) -> CheckItem:
@@ -128,7 +129,7 @@ def check_nvidia_gpu(min_vram_mb: int = 0, timeout: int = 5) -> CheckItem:
         driver_version = parts[1]
         total_vram_mb = int(parts[2])
         free_vram_mb = int(parts[3])
-        
+
     except (IndexError, ValueError) as parse_err:
         return CheckItem(
             name="nvidia_gpu",
@@ -162,3 +163,53 @@ def check_nvidia_gpu(min_vram_mb: int = 0, timeout: int = 5) -> CheckItem:
         message=f"GPU '{gpu_name}' verified ({total_vram_mb} MB VRAM, driver {driver_version}).",
         details=details,
     )
+
+
+
+def check_disk_space(path: str = ".", min_free_gb: float = 5.0) -> CheckItem:
+    try:
+        total, used, free = shutil.disk_usage(path)
+
+        free_gb = round(free / (1024 ** 3), 2)
+        total_gb = round(total / (1024 ** 3), 2)
+
+        details = {
+            "path": path,
+            "total_gb": total_gb,
+            "free_gb": free_gb,
+            "min_free_gb": min_free_gb,
+        }
+
+        if free_gb < min_free_gb:
+            return CheckItem(
+                name="disk_space",
+                passed=False,
+                message=f"Insufficient free disk space at '{path}': {free_gb} GB free, but {min_free_gb} GB required.",
+                details=details,
+            )
+
+        return CheckItem(
+            name="disk_space",
+            passed=True,
+            message=f"Sufficient disk space at '{path}': {free_gb} GB free of {total_gb} GB total.",
+            details=details,
+        )
+
+    except Exception as exc:
+        return CheckItem(
+            name="disk_space",
+            passed=False,
+            message=f"Failed to check disk space at path '{path}': {exc}",
+            details={"path": path, "error": str(exc)},
+        )
+
+def run_preflight(min_vram_mb: int = 0,min_disk_gb: float = 5.0,disk_path: str = ".",) -> PreflightResult:
+    docker = check_docker()
+    nvidia_gpu = check_nvidia_gpu(min_vram_mb=min_vram_mb)
+    disk_space =  check_disk_space(path=disk_path, min_free_gb=min_disk_gb)
+
+    checks = [docker,nvidia_gpu,disk_space]
+
+    overall_passed = all(c.passed for c in checks)
+
+    return PreflightResult(passed=overall_passed, checks=checks)
