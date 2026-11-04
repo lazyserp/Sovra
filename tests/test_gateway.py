@@ -2,22 +2,73 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
+from core.db.models import Base, DeploymentRecord, ModelRecord, NodeRecord
+from core.db.session import get_db, init_db
 from core.gateway.app import app
 
-client = TestClient(app)
+
+@pytest.fixture
+def client_with_gateway_db():
+    """Create a FastAPI TestClient wired to an isolated in-memory DB with an active deployment."""
+    test_engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    init_db(target_engine=test_engine)
+    test_session_factory = sessionmaker(test_engine, expire_on_commit=False)
+
+    # Seed the database with a running model deployment
+    with test_session_factory() as session:
+        node = NodeRecord(
+            id="node-test",
+            hostname="test-host",
+            ip_address="127.0.0.1",
+            status="online",
+        )
+        model = ModelRecord(
+            id="qwen-2.5-0.5b-instruct",
+            name="Qwen 2.5 0.5B Instruct",
+            artifact_path="./storage/models/qwen2.5-0.5b-instruct",
+            min_vram_mb=1500,
+        )
+        deployment = DeploymentRecord(
+            id="deploy-active-1",
+            model_id="qwen-2.5-0.5b-instruct",
+            node_id="node-test",
+            port=8000,
+            status="running",
+        )
+        session.add_all([node, model, deployment])
+        session.commit()
+
+    def override_get_db():
+        with test_session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    with TestClient(app) as client:
+        yield client
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=test_engine)
 
 
-def test_gateway_health():
+def test_gateway_health(client_with_gateway_db: TestClient):
     """Verify gateway health check endpoint returns 200."""
-    response = client.get("/health")
+    response = client_with_gateway_db.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "healthy", "service": "sovra-gateway"}
 
 
-def test_gateway_list_models():
-    """Verify OpenAI-compatible model listing returns active models."""
-    response = client.get("/v1/models")
+def test_gateway_list_models(client_with_gateway_db: TestClient):
+    """Verify OpenAI-compatible model listing dynamically queries active deployments."""
+    response = client_with_gateway_db.get("/v1/models")
     assert response.status_code == 200
     data = response.json()
     assert data["object"] == "list"
@@ -25,30 +76,29 @@ def test_gateway_list_models():
     assert "qwen-2.5-0.5b-instruct" in model_ids
 
 
-def test_chat_completions_model_not_found():
-    """Verify request for unknown model returns 404."""
+def test_chat_completions_model_not_found(client_with_gateway_db: TestClient):
+    """Verify request for un-deployed model returns 404."""
     payload = {
         "model": "non-existent-model",
         "messages": [{"role": "user", "content": "Hello"}],
     }
-    response = client.post("/v1/chat/completions", json=payload)
+    response = client_with_gateway_db.post("/v1/chat/completions", json=payload)
     assert response.status_code == 404
-    assert "not registered" in response.json()["detail"]
+    assert "not currently running" in response.json()["detail"]
 
 
-def test_chat_completions_backend_unreachable():
-    """Verify 503 error when inference engine backend is offline."""
+def test_chat_completions_backend_unreachable(client_with_gateway_db: TestClient):
+    """Verify 503 error when inference engine port is offline."""
     payload = {
         "model": "qwen-2.5-0.5b-instruct",
         "messages": [{"role": "user", "content": "Hello"}],
     }
-    # When no mock is present and port 8000 has no vLLM server:
-    response = client.post("/v1/chat/completions", json=payload)
+    response = client_with_gateway_db.post("/v1/chat/completions", json=payload)
     assert response.status_code == 503
     assert "unreachable" in response.json()["detail"]
 
 
-def test_chat_completions_forward_success():
+def test_chat_completions_forward_success(client_with_gateway_db: TestClient):
     """Verify successful proxying and response handling when inference engine responds."""
     mock_engine_response = {
         "id": "chatcmpl-test-123",
@@ -59,7 +109,7 @@ def test_chat_completions_forward_success():
                 "index": 0,
                 "message": {
                     "role": "assistant",
-                    "content": "Hello from behind Sovra Gateway!",
+                    "content": "Hello from behind dynamic Sovra Gateway!",
                 },
                 "finish_reason": "stop",
             }
@@ -81,8 +131,7 @@ def test_chat_completions_forward_success():
     with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
         mock_post.return_value = mock_response
 
-        response = client.post("/v1/chat/completions", json=payload)
+        response = client_with_gateway_db.post("/v1/chat/completions", json=payload)
         assert response.status_code == 200
         assert response.json() == mock_engine_response
         mock_post.assert_called_once()
-
