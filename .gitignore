@@ -1,0 +1,21 @@
+images/
+AGENTS.md
+docs/
+# Virtual Environment
+.venv/
+venv/
+
+# Python cache & artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Testing cache
+.pytest_cache/
+.coverage
+
+# Environment & local secrets
+.env
