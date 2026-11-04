@@ -9,7 +9,7 @@ from core.db.models import ApiKeyRecord
 def hash_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
-def generate_api_key(prefix: str = "sovra_sk_live") -> tuple[str,str,str]:
+def generate_api_key(prefix: str = "sovra_sk_live_") -> tuple[str,str,str]:
     """
     Generate a cryptographically secure API key.
     
@@ -38,6 +38,9 @@ def verify_api_key(raw_key: str, db:Session) -> ApiKeyRecord | None:
     record = db.scalar(stmt)
 
     if not record:
+        return None
+
+    if not record.is_active:
         return None
 
     if record.expires_at is not None:
