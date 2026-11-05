@@ -7,10 +7,11 @@ from sqlalchemy.orm import Session
 
 from core.db.session import get_db
 from core.gateway.schema import ChatCompletionRequest
-from core.db.models import ApiKeyRecord,AuditLogRecord,DeploymentRecord
-from core.db.models import ApiKeyRecord, DeploymentRecord
+from core.db.models import ApiKeyRecord, AuditLogRecord, DeploymentRecord
 from core.security.keys import verify_api_key
+from core.gateway.limiter import InMemoryRateLimiter
 
+rate_limiter = InMemoryRateLimiter(requests_per_minute=60,burst=10)
 bearer_scheme = HTTPBearer(auto_error=False)
 
 app = FastAPI(title="Sovra AI Gateway", version="0.1.0")
@@ -71,6 +72,24 @@ async def chat_completions(
         DeploymentRecord.status == "running",
     )
     deployment = db.scalar(stmt)
+
+    allowed, retry_after = rate_limiter.check(api_key.id)
+    if not allowed:
+        audit_log = AuditLogRecord(
+            api_key_id=api_key.id,
+            model_id=request.model,
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            error_message=f"Rate limit exceeded. Retry after {retry_after}s.",
+        )
+        db.add(audit_log)
+        db.commit()
+
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded. Try again in {retry_after} seconds.",
+            headers={"Retry-After": str(int(retry_after) or 1)},
+        )
+        
 
     if not deployment:
         audit_log= AuditLogRecord(

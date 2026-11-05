@@ -234,3 +234,46 @@ def test_chat_completions_forward_success_records_telemetry(client_with_gateway_
             assert log.total_tokens == 40
             assert log.latency_ms > 0
             assert log.error_message is None
+
+
+def test_chat_completions_rate_limit_exceeded_returns_429(client_with_gateway_db: TestClient):
+    """Verify that exceeding burst capacity triggers 429 Too Many Requests with Retry-After header."""
+    from core.gateway.app import rate_limiter
+
+    # Use a small burst limiter for this test
+    rate_limiter.capacity = 2.0
+    rate_limiter.rate = 0.1  # Very slow refill (1 token per 10s)
+    rate_limiter._buckets.clear()
+
+    payload = {
+        "model": "qwen-2.5-0.5b-instruct",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    # First 2 requests consume the burst capacity
+    res1 = client_with_gateway_db.post("/v1/chat/completions", json=payload, headers=AUTH_HEADERS)
+    res2 = client_with_gateway_db.post("/v1/chat/completions", json=payload, headers=AUTH_HEADERS)
+    assert res1.status_code in [200, 503]
+    assert res2.status_code in [200, 503]
+
+    # 3rd request MUST be blocked by rate limiter
+    res3 = client_with_gateway_db.post("/v1/chat/completions", json=payload, headers=AUTH_HEADERS)
+    assert res3.status_code == 429
+    assert "Rate limit exceeded" in res3.json()["detail"]
+    assert "Retry-After" in res3.headers
+
+    # Verify audit log recorded the 429 rate limit violation
+    with client_with_gateway_db.session_factory() as session:
+        log = session.scalar(
+            select(AuditLogRecord).where(
+                AuditLogRecord.status_code == 429,
+            )
+        )
+        assert log is not None
+        assert "Rate limit exceeded" in log.error_message
+
+    # Reset limiter settings back to defaults
+    rate_limiter.capacity = 10.0
+    rate_limiter.rate = 1.0
+    rate_limiter._buckets.clear()
+
