@@ -2,11 +2,18 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from core.db.models import ApiKeyRecord, Base, DeploymentRecord, ModelRecord, NodeRecord
+from core.db.models import (
+    ApiKeyRecord,
+    AuditLogRecord,
+    Base,
+    DeploymentRecord,
+    ModelRecord,
+    NodeRecord,
+)
 from core.db.session import get_db, init_db
 from core.gateway.app import app
 from core.security.keys import hash_key
@@ -63,6 +70,8 @@ def client_with_gateway_db():
     app.dependency_overrides[get_db] = override_get_db
 
     with TestClient(app) as client:
+        # Expose session_factory to test cases for database state verification
+        client.session_factory = test_session_factory
         yield client
 
     app.dependency_overrides.clear()
@@ -113,8 +122,8 @@ def test_chat_completions_invalid_auth(client_with_gateway_db: TestClient):
     assert "Invalid, revoked, or expired API key" in response.json()["detail"]
 
 
-def test_chat_completions_model_not_found(client_with_gateway_db: TestClient):
-    """Verify authenticated request for un-deployed model returns 404."""
+def test_chat_completions_model_not_found_logs_audit(client_with_gateway_db: TestClient):
+    """Verify authenticated request for un-deployed model returns 404 and writes an audit log."""
     payload = {
         "model": "non-existent-model",
         "messages": [{"role": "user", "content": "Hello"}],
@@ -127,9 +136,20 @@ def test_chat_completions_model_not_found(client_with_gateway_db: TestClient):
     assert response.status_code == 404
     assert "not currently running" in response.json()["detail"]
 
+    # Verify audit log recorded the 404 failure
+    with client_with_gateway_db.session_factory() as session:
+        log = session.scalar(
+            select(AuditLogRecord).where(
+                AuditLogRecord.model_id == "non-existent-model",
+                AuditLogRecord.status_code == 404,
+            )
+        )
+        assert log is not None
+        assert "not currently running" in log.error_message
 
-def test_chat_completions_backend_unreachable(client_with_gateway_db: TestClient):
-    """Verify authenticated request returns 503 error when inference engine port is offline."""
+
+def test_chat_completions_backend_unreachable_logs_audit(client_with_gateway_db: TestClient):
+    """Verify authenticated request returns 503 and writes an audit log when inference engine is offline."""
     payload = {
         "model": "qwen-2.5-0.5b-instruct",
         "messages": [{"role": "user", "content": "Hello"}],
@@ -142,9 +162,20 @@ def test_chat_completions_backend_unreachable(client_with_gateway_db: TestClient
     assert response.status_code == 503
     assert "unreachable" in response.json()["detail"]
 
+    # Verify audit log recorded the 503 failure
+    with client_with_gateway_db.session_factory() as session:
+        log = session.scalar(
+            select(AuditLogRecord).where(
+                AuditLogRecord.model_id == "qwen-2.5-0.5b-instruct",
+                AuditLogRecord.status_code == 503,
+            )
+        )
+        assert log is not None
+        assert "unreachable" in log.error_message
 
-def test_chat_completions_forward_success(client_with_gateway_db: TestClient):
-    """Verify successful proxying and response handling when inference engine responds."""
+
+def test_chat_completions_forward_success_records_telemetry(client_with_gateway_db: TestClient):
+    """Verify successful proxying returns 200 and records full token telemetry and latency in audit logs."""
     mock_engine_response = {
         "id": "chatcmpl-test-123",
         "object": "chat.completion",
@@ -159,6 +190,11 @@ def test_chat_completions_forward_success(client_with_gateway_db: TestClient):
                 "finish_reason": "stop",
             }
         ],
+        "usage": {
+            "prompt_tokens": 15,
+            "completion_tokens": 25,
+            "total_tokens": 40,
+        },
     }
 
     mock_response = httpx.Response(
@@ -183,4 +219,18 @@ def test_chat_completions_forward_success(client_with_gateway_db: TestClient):
         )
         assert response.status_code == 200
         assert response.json() == mock_engine_response
-        mock_post.assert_called_once()
+
+        # Verify audit log recorded the successful transaction with token metrics
+        with client_with_gateway_db.session_factory() as session:
+            log = session.scalar(
+                select(AuditLogRecord).where(
+                    AuditLogRecord.model_id == "qwen-2.5-0.5b-instruct",
+                    AuditLogRecord.status_code == 200,
+                )
+            )
+            assert log is not None
+            assert log.prompt_tokens == 15
+            assert log.completion_tokens == 25
+            assert log.total_tokens == 40
+            assert log.latency_ms > 0
+            assert log.error_message is None
