@@ -1,12 +1,13 @@
 import httpx
+import time
 from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from core.db.session import get_db
 from core.gateway.schema import ChatCompletionRequest
-
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from core.db.models import ApiKeyRecord,AuditLogRecord,DeploymentRecord
 from core.db.models import ApiKeyRecord, DeploymentRecord
 from core.security.keys import verify_api_key
 
@@ -63,6 +64,8 @@ async def chat_completions(
 ):
     """Route chat completions dynamically to the active engine port from the database."""
     #  Look up in the database: Is this model currently running?
+    start_time = time.perf_counter()
+
     stmt = select(DeploymentRecord).where(
         DeploymentRecord.model_id == request.model,
         DeploymentRecord.status == "running",
@@ -70,6 +73,15 @@ async def chat_completions(
     deployment = db.scalar(stmt)
 
     if not deployment:
+        audit_log= AuditLogRecord(
+            api_key_id=api_key.id,
+            model_id=request.model,
+            status_code=status.HTTP_404_NOT_FOUND,
+            error_message=f"Model {request.model} is not currently running"
+        )
+        db.add(audit_log)
+        db.commit()
+
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Model '{request.model}' is not currently running in Sovra.",
@@ -84,8 +96,37 @@ async def chat_completions(
                 backend_url,
                 json=request.model_dump(exclude_none=True),
             )
-            return response.json()
+
+            data = response.json()
+            usage = data.get("usage", {})
+            latency_ms = (time.perf_counter() - start_time) * 1000.0
+
+            audit_log = AuditLogRecord(
+                api_key_id=api_key.id,
+                model_id=request.model,
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+                total_tokens=usage.get("total_tokens", 0),
+                latency_ms=round(latency_ms, 2),
+                status_code=response.status_code,
+            )
+            db.add(audit_log)
+            db.commit()
+            return data
+
         except httpx.ConnectError:
+            latency_ms = (time.perf_counter() - start_time) * 1000.0
+
+            audit_log = AuditLogRecord(
+                api_key_id=api_key.id,
+                model_id=request.model,
+                latency_ms=round(latency_ms, 2),
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                error_message=f"Inference engine for '{request.model}' on port {deployment.port} is unreachable.",
+            )
+            db.add(audit_log)
+            db.commit()
+
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"Inference engine for '{request.model}' on port {deployment.port} is unreachable.",
