@@ -86,3 +86,19 @@ class ApiKeyRecord(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
     )
+
+
+class AuditLogRecord(Base):
+    """Represents a metadata-only audit record for an inference request."""
+    __tablename__ = "audit_logs"
+
+    id: Mapped[str] = mapped_column(String,primary_key=True,default=lambda: str(uuid.uuid4()),)
+    api_key_id: Mapped[str | None] = mapped_column(ForeignKey("api_keys.id"),nullable=True,index=True,)
+    model_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
+    prompt_tokens: Mapped[int] = mapped_column(default=0)
+    completion_tokens: Mapped[int] = mapped_column(default=0)
+    total_tokens: Mapped[int] = mapped_column(default=0)
+    latency_ms: Mapped[float] = mapped_column(default=0.0)
+    status_code: Mapped[int] = mapped_column(default=200)
+    error_message: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),default=lambda: datetime.now(timezone.utc),index=True)
