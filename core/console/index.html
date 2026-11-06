@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sovra — Sovereign AI Observability & Control</title>
+  <!-- Tailwind CSS CDN with full fallbacks -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f5f3ff',
+              500: '#8b5cf6',
+              600: '#7c3aed',
+              700: '#6d28d9',
+            },
+            zinc: {
+              850: '#1e1e24',
+              925: '#111116',
+              950: '#09090b',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #09090b;
+      color: #f4f4f5;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: #09090b;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #27272a;
+      border-radius: 3px;
+    }
+    .pulse-dot {
+      animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    @keyframes pulse-ring {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.9); }
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col bg-zinc-950 text-zinc-100 antialiased selection:bg-brand-600 selection:text-white">
+
+  <!-- Top Header -->
+  <header class="h-16 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur sticky top-0 z-40 px-6 flex items-center justify-between">
+    <div class="flex items-center space-x-4">
+      <div class="flex items-center space-x-2">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-violet-600 to-indigo-500 flex items-center justify-center font-bold text-white shadow-lg shadow-violet-500/20">
+          S
+        </div>
+        <span class="font-bold text-lg tracking-wider text-white">SOVRA</span>
+      </div>
+      <span class="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium flex items-center gap-1.5">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-dot"></span>
+        Air-Gapped Sovereign AI
+      </span>
+    </div>
+
+    <!-- Master Token Configuration & Refresh -->
+    <div class="flex items-center space-x-3 text-sm">
+      <div class="flex items-center bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 focus-within:border-violet-500 transition-colors">
+        <span class="text-xs text-zinc-500 mr-2 font-mono">TOKEN:</span>
+        <input id="adminTokenInput" type="password" placeholder="Enter admin token..." 
+               class="bg-transparent text-xs text-zinc-200 outline-none w-36 font-mono focus:w-48 transition-all">
+        <button onclick="saveToken()" title="Save Token" class="text-xs text-violet-400 hover:text-violet-300 ml-2 font-semibold">Save</button>
+      </div>
+      <button onclick="fetchCurrentTabData()" class="p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 transition-colors" title="Refresh Live Data">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Body Layout -->
+  <div class="flex-1 flex overflow-hidden">
+    <!-- Sidebar Navigation -->
+    <aside class="w-64 border-r border-zinc-800 bg-zinc-925/50 flex flex-col justify-between p-4">
+      <nav class="space-y-1">
+        <div class="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider px-3 mb-2">Platform</div>
+        
+        <button onclick="switchTab('observability')" id="nav-observability" class="nav-item w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-zinc-300 hover:bg-zinc-850 hover:text-white">
+          <svg class="w-4 h-4 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+          <span>Traces & Metrics</span>
+        </button>
+
+        <button onclick="switchTab('nodes')" id="nav-nodes" class="nav-item w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-zinc-400 hover:bg-zinc-850 hover:text-white">
+          <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path></svg>
+          <span>GPU Compute Nodes</span>
+        </button>
+
+        <button onclick="switchTab('projects')" id="nav-projects" class="nav-item w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-zinc-400 hover:bg-zinc-850 hover:text-white">
+          <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+          <span>Projects & Tenants</span>
+        </button>
+
+        <button onclick="switchTab('keys')" id="nav-keys" class="nav-item w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-zinc-400 hover:bg-zinc-850 hover:text-white">
+          <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
+          <span>API Keys (RBAC)</span>
+        </button>
+
+        <div class="pt-4">
+          <div class="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider px-3 mb-2">Inference</div>
+          <button onclick="switchTab('playground')" id="nav-playground" class="nav-item w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-zinc-400 hover:bg-zinc-850 hover:text-white">
+            <svg class="w-4 h-4 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+            <span>AI Playground</span>
+          </button>
+        </div>
+      </nav>
+
+      <!-- Airgap Compliance Badge -->
+      <div class="bg-zinc-900 border border-zinc-800/80 rounded-xl p-3.5 space-y-2">
+        <div class="flex items-center justify-between text-xs font-semibold text-zinc-300">
+          <span>Security Guardrails</span>
+          <span class="text-emerald-400">ENFORCED</span>
+        </div>
+        <div class="text-[11px] text-zinc-400 leading-relaxed">
+          Zero internet egress. Local inference runner on customer GPU hardware.
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Dynamic Content Region -->
+    <main class="flex-1 overflow-y-auto custom-scrollbar p-8">
+
+      <!-- TAB 1: OBSERVABILITY & TRACES (LANGFUSE STYLE) -->
+      <section id="tab-observability" class="space-y-6">
+        <div>
+          <h1 class="text-2xl font-bold tracking-tight text-white">Observability & Traces</h1>
+          <p class="text-sm text-zinc-400 mt-1">Real-time metadata-only request telemetry, token consumption, and model latency.</p>
+        </div>
+
+        <!-- Metric KPI Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+            <div class="text-xs font-medium text-zinc-400 uppercase tracking-wider">Total Inferences</div>
+            <div id="statTotalRequests" class="text-2xl font-bold text-white mt-1">0</div>
+            <div class="text-[11px] text-zinc-500 mt-1">All gateway requests</div>
+          </div>
+          <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+            <div class="text-xs font-medium text-zinc-400 uppercase tracking-wider">Total Tokens Processed</div>
+            <div id="statTotalTokens" class="text-2xl font-bold text-violet-400 mt-1">0</div>
+            <div class="text-[11px] text-zinc-500 mt-1">Prompt + completion tokens</div>
+          </div>
+          <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+            <div class="text-xs font-medium text-zinc-400 uppercase tracking-wider">Average Latency</div>
+            <div id="statAvgLatency" class="text-2xl font-bold text-emerald-400 mt-1">0.00 ms</div>
+            <div class="text-[11px] text-zinc-500 mt-1">Gateway round-trip</div>
+          </div>
+          <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+            <div class="text-xs font-medium text-zinc-400 uppercase tracking-wider">Cloud Data Egress</div>
+            <div class="text-2xl font-bold text-emerald-400 mt-1">0 Bytes</div>
+            <div class="text-[11px] text-emerald-500/80 mt-1">100% Private & Disconnected</div>
+          </div>
+        </div>
+
+        <!-- Traces Table (Langfuse Look & Feel) -->
+        <div class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-xl">
+          <div class="p-4 border-b border-zinc-800 flex justify-between items-center">
+            <div class="font-semibold text-sm text-zinc-200 flex items-center gap-2">
+              <span>Inference Traces</span>
+              <span id="tracesCountBadge" class="text-xs bg-zinc-800 px-2 py-0.5 rounded-full text-zinc-400">0 events</span>
+            </div>
+            <button onclick="fetchAuditLogs()" class="text-xs text-violet-400 hover:text-violet-300 font-medium">Refresh Logs</button>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+              <thead class="bg-zinc-950/60 text-[11px] text-zinc-400 uppercase tracking-wider border-b border-zinc-800">
+                <tr>
+                  <th class="py-3 px-4">Status</th>
+                  <th class="py-3 px-4">Timestamp</th>
+                  <th class="py-3 px-4">Model</th>
+                  <th class="py-3 px-4">Project</th>
+                  <th class="py-3 px-4">Tokens (P/C/Total)</th>
+                  <th class="py-3 px-4">Latency</th>
+                </tr>
+              </thead>
+              <tbody id="tracesTableBody" class="divide-y divide-zinc-800 text-xs">
+                <tr>
+                  <td colspan="6" class="py-8 text-center text-zinc-500">Loading inference traces...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: GPU COMPUTE NODES -->
+      <section id="tab-nodes" class="space-y-6 hidden">
+        <div>
+          <h1 class="text-2xl font-bold tracking-tight text-white">GPU Compute Nodes</h1>
+          <p class="text-sm text-zinc-400 mt-1">Self-hosted physical and virtual GPU nodes managed by the Sovra Control Plane.</p>
+        </div>
+
+        <div id="nodesContainer" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="py-8 text-center text-zinc-500 col-span-2">Discovering nodes...</div>
+        </div>
+      </section>
+
+      <!-- TAB 3: PROJECTS & TENANTS -->
+      <section id="tab-projects" class="space-y-6 hidden">
+        <div class="flex justify-between items-center">
+          <div>
+            <h1 class="text-2xl font-bold tracking-tight text-white">Projects & Tenants</h1>
+            <p class="text-sm text-zinc-400 mt-1">Multi-tenant workspace isolation for different departments and security boundaries.</p>
+          </div>
+          <button onclick="openModal('modalCreateProject')" class="px-3.5 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold shadow-lg shadow-violet-600/20 transition-colors">
+            + New Project
+          </button>
+        </div>
+
+        <div class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-xl">
+          <table class="w-full text-left text-sm">
+            <thead class="bg-zinc-950/60 text-[11px] text-zinc-400 uppercase tracking-wider border-b border-zinc-800">
+              <tr>
+                <th class="py-3 px-4">Project Name</th>
+                <th class="py-3 px-4">Description</th>
+                <th class="py-3 px-4">Project ID</th>
+                <th class="py-3 px-4">Created At</th>
+              </tr>
+            </thead>
+            <tbody id="projectsTableBody" class="divide-y divide-zinc-800 text-xs">
+              <tr>
+                <td colspan="4" class="py-8 text-center text-zinc-500">Loading projects...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- TAB 4: API KEYS (RBAC) -->
+      <section id="tab-keys" class="space-y-6 hidden">
+        <div class="flex justify-between items-center">
+          <div>
+            <h1 class="text-2xl font-bold tracking-tight text-white">API Keys & Access Control</h1>
+            <p class="text-sm text-zinc-400 mt-1">Role-based access tokens with SHA-256 cryptographic hashing and instant revocation.</p>
+          </div>
+          <button onclick="openModal('modalCreateKey')" class="px-3.5 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold shadow-lg shadow-violet-600/20 transition-colors">
+            + Generate Key
+          </button>
+        </div>
+
+        <div class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-xl">
+          <table class="w-full text-left text-sm">
+            <thead class="bg-zinc-950/60 text-[11px] text-zinc-400 uppercase tracking-wider border-b border-zinc-800">
+              <tr>
+                <th class="py-3 px-4">Name</th>
+                <th class="py-3 px-4">Prefix</th>
+                <th class="py-3 px-4">Role</th>
+                <th class="py-3 px-4">Project</th>
+                <th class="py-3 px-4">Status</th>
+                <th class="py-3 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="keysTableBody" class="divide-y divide-zinc-800 text-xs">
+              <tr>
+                <td colspan="6" class="py-8 text-center text-zinc-500">Loading API keys...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- TAB 5: INFERENCE PLAYGROUND -->
+      <section id="tab-playground" class="space-y-6 hidden">
+        <div>
+          <h1 class="text-2xl font-bold tracking-tight text-white">Sovereign AI Playground</h1>
+          <p class="text-sm text-zinc-400 mt-1">Test your local models directly through the AI Gateway with authenticated credentials.</p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- Configuration Panel -->
+          <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-4">
+            <h3 class="text-sm font-semibold text-zinc-200">Request Configuration</h3>
+            
+            <div class="space-y-1.5">
+              <label class="text-xs text-zinc-400">Target Model</label>
+              <select id="playgroundModel" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 outline-none focus:border-violet-500 font-mono">
+                <option value="qwen2.5:0.5b">qwen2.5:0.5b (Local Engine)</option>
+                <option value="qwen-2.5-0.5b-instruct">qwen-2.5-0.5b-instruct</option>
+              </select>
+            </div>
+
+            <div class="space-y-1.5">
+              <label class="text-xs text-zinc-400">Client API Key (Bearer)</label>
+              <input id="playgroundKey" type="password" placeholder="sovra_sk_live_..." class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 outline-none focus:border-violet-500 font-mono">
+            </div>
+
+            <div class="space-y-1.5">
+              <label class="text-xs text-zinc-400">Temperature (0.0 – 1.0)</label>
+              <input id="playgroundTemp" type="number" step="0.1" value="0.7" min="0" max="1" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 outline-none focus:border-violet-500">
+            </div>
+
+            <div class="pt-2 text-[11px] text-zinc-500">
+              Requests route to <span class="text-violet-400 font-mono">http://localhost:8000/v1/chat/completions</span> and record audit logs automatically.
+            </div>
+          </div>
+
+          <!-- Prompt & Response Panel -->
+          <div class="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col space-y-4 min-h-[460px]">
+            <div class="flex-1 flex flex-col space-y-2">
+              <label class="text-xs text-zinc-400 font-semibold">User Prompt</label>
+              <textarea id="playgroundPrompt" rows="4" placeholder="Enter sensitive enterprise prompt (e.g. 'Analyze internal risk metrics for Q3')..." class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-200 outline-none focus:border-violet-500 resize-none font-sans"></textarea>
+            </div>
+
+            <div class="flex justify-between items-center pt-2">
+              <div id="playgroundMeta" class="text-xs text-zinc-400 font-mono">Ready</div>
+              <button id="playgroundBtn" onclick="runInference()" class="px-5 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold shadow-lg shadow-violet-600/20 transition-all flex items-center gap-2">
+                <span>Send to AI Gateway</span>
+              </button>
+            </div>
+
+            <div class="flex-1 flex flex-col space-y-2 pt-2 border-t border-zinc-800">
+              <div class="flex justify-between items-center">
+                <label class="text-xs text-zinc-400 font-semibold">Gateway Response</label>
+                <span id="playgroundStatus" class="text-xs"></span>
+              </div>
+              <pre id="playgroundResponse" class="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-300 font-mono whitespace-pre-wrap overflow-y-auto max-h-[220px]">Response will render here...</pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- MODAL: CREATE PROJECT -->
+  <div id="modalCreateProject" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+    <div class="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl">
+      <h3 class="text-lg font-bold text-white">Create New Project</h3>
+      <div class="space-y-3">
+        <div class="space-y-1">
+          <label class="text-xs text-zinc-400">Project Name</label>
+          <input id="projNameInput" type="text" placeholder="e.g. Clinical-Oncology" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 outline-none focus:border-violet-500">
+        </div>
+        <div class="space-y-1">
+          <label class="text-xs text-zinc-400">Description</label>
+          <input id="projDescInput" type="text" placeholder="Internal healthcare diagnostic models" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 outline-none focus:border-violet-500">
+        </div>
+      </div>
+      <div class="flex justify-end space-x-2 pt-2">
+        <button onclick="closeModal('modalCreateProject')" class="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-300">Cancel</button>
+        <button onclick="submitCreateProject()" class="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-xs font-semibold text-white">Create Project</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: CREATE API KEY -->
+  <div id="modalCreateKey" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+    <div class="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl">
+      <h3 class="text-lg font-bold text-white">Mint Cryptographic API Key</h3>
+      <div class="space-y-3">
+        <div class="space-y-1">
+          <label class="text-xs text-zinc-400">Key Name</label>
+          <input id="keyNameInput" type="text" placeholder="e.g. fraud-service-prod" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 outline-none focus:border-violet-500">
+        </div>
+        <div class="space-y-1">
+          <label class="text-xs text-zinc-400">Assign to Project (Optional)</label>
+          <select id="keyProjectSelect" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 outline-none focus:border-violet-500">
+            <option value="">None (Global Unscoped)</option>
+          </select>
+        </div>
+        <div class="space-y-1">
+          <label class="text-xs text-zinc-400">Role</label>
+          <select id="keyRoleSelect" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 outline-none focus:border-violet-500">
+            <option value="inference">inference (Gateway calls only)</option>
+            <option value="operator">operator (Manage nodes & deployments)</option>
+            <option value="admin">admin (Full control plane rights)</option>
+          </select>
+        </div>
+      </div>
+      <div class="flex justify-end space-x-2 pt-2">
+        <button onclick="closeModal('modalCreateKey')" class="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-300">Cancel</button>
+        <button onclick="submitCreateKey()" class="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-xs font-semibold text-white">Mint Key</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: KEY CREATED SUCCESS (SHOW ONCE) -->
+  <div id="modalKeySuccess" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+    <div class="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-lg p-6 space-y-4 shadow-2xl">
+      <div class="flex items-center space-x-3 text-emerald-400">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+        <h3 class="text-lg font-bold text-white">API Key Generated</h3>
+      </div>
+      <p class="text-xs text-zinc-400">
+        Copy your secret API key now. For enterprise security, Sovra only stores a one-way SHA-256 hash and <span class="text-amber-400">cannot display it again</span>.
+      </p>
+      <div class="bg-zinc-950 border border-zinc-800 p-3 rounded-xl flex items-center justify-between font-mono text-xs text-violet-300 select-all break-all">
+        <span id="newKeyPlain">sovra_sk_live_...</span>
+        <button onclick="copySecretKey()" class="ml-3 px-3 py-1 bg-violet-600 hover:bg-violet-500 text-white rounded text-xs font-sans">Copy</button>
+      </div>
+      <div class="flex justify-end pt-2">
+        <button onclick="closeModal('modalKeySuccess')" class="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-300">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="fixed bottom-6 right-6 z-50 space-y-2"></div>
+
+  <!-- Vanilla Application State & API Integration -->
+  <script>
+    const API_BASE = window.location.origin;
+    const GATEWAY_BASE = "http://127.0.0.1:8000";
+    let currentTab = 'observability';
+
+    // Token Management
+    function getAdminToken() {
+      return localStorage.getItem('SOVRA_ADMIN_TOKEN') || 'sovra';
+    }
+
+    function saveToken() {
+      const val = document.getElementById('adminTokenInput').value.trim();
+      if (val) {
+        localStorage.setItem('SOVRA_ADMIN_TOKEN', val);
+        showToast("Admin token saved", "success");
+        fetchCurrentTabData();
+      }
+    }
+
+    function initTokenInput() {
+      const stored = localStorage.getItem('SOVRA_ADMIN_TOKEN');
+      if (stored) {
+        document.getElementById('adminTokenInput').value = stored;
+      } else {
+        document.getElementById('adminTokenInput').value = 'sovra';
+      }
+    }
+
+    // Tab Navigation
+    function switchTab(tabId) {
+      currentTab = tabId;
+      document.querySelectorAll('main > section').forEach(sec => sec.classList.add('hidden'));
+      document.getElementById(`tab-${tabId}`).classList.remove('hidden');
+
+      document.querySelectorAll('.nav-item').forEach(btn => {
+        btn.classList.remove('bg-zinc-850', 'text-white');
+        btn.classList.add('text-zinc-400');
+      });
+      const activeNav = document.getElementById(`nav-${tabId}`);
+      if (activeNav) {
+        activeNav.classList.add('bg-zinc-850', 'text-white');
+        activeNav.classList.remove('text-zinc-400');
+      }
+
+      fetchCurrentTabData();
+    }
+
+    function fetchCurrentTabData() {
+      if (currentTab === 'observability') {
+        fetchMetricsOverview();
+        fetchAuditLogs();
+      } else if (currentTab === 'nodes') {
+        fetchNodes();
+      } else if (currentTab === 'projects') {
+        fetchProjects();
+      } else if (currentTab === 'keys') {
+        fetchKeys();
+      }
+    }
+
+    // API Helpers
+    async function apiFetch(endpoint, options = {}) {
+      const token = getAdminToken();
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        ...(options.headers || {})
+      };
+      const res = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
+      if (res.status === 401 || res.status === 403) {
+        showToast("Authentication Failed: Check Admin Token in top-right", "error");
+      }
+      return res;
+    }
+
+    // 1. Fetch Metrics & Traces (Langfuse-style)
+    async function fetchMetricsOverview() {
+      try {
+        const res = await apiFetch('/api/v1/metrics/overview');
+        if (!res.ok) return;
+        const data = await res.json();
+        document.getElementById('statTotalRequests').innerText = data.total_requests;
+        document.getElementById('statTotalTokens').innerText = Number(data.total_tokens).toLocaleString();
+        document.getElementById('statAvgLatency').innerText = `${data.avg_latency_ms} ms`;
+      } catch (err) {
+        console.error("Failed to load metrics overview", err);
+      }
+    }
+
+    async function fetchAuditLogs() {
+      try {
+        const res = await apiFetch('/api/v1/audit-logs?limit=50');
+        if (!res.ok) return;
+        const logs = await res.json();
+        const tbody = document.getElementById('tracesTableBody');
+        document.getElementById('tracesCountBadge').innerText = `${logs.length} events`;
+
+        if (logs.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-zinc-500">No inference requests logged yet. Send a request via the Playground!</td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = logs.map(log => {
+          let statusBadge = '';
+          if (log.status_code === 200) {
+            statusBadge = `<span class="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">200 OK</span>`;
+          } else if (log.status_code === 429) {
+            statusBadge = `<span class="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono">429 RATE LIMIT</span>`;
+          } else if (log.status_code === 404) {
+            statusBadge = `<span class="px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700 font-mono">404 NOT FOUND</span>`;
+          } else {
+            statusBadge = `<span class="px-2 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/20 font-mono">${log.status_code} ERROR</span>`;
+          }
+
+          const projectBadge = log.project_id 
+            ? `<span class="px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-mono">${log.project_id.slice(0, 8)}...</span>` 
+            : `<span class="text-zinc-600 font-mono">unscoped</span>`;
+
+          const dateStr = new Date(log.created_at).toLocaleTimeString();
+
+          return `
+            <tr class="hover:bg-zinc-850/50 transition-colors">
+              <td class="py-3 px-4">${statusBadge}</td>
+              <td class="py-3 px-4 font-mono text-zinc-400">${dateStr}</td>
+              <td class="py-3 px-4 font-mono text-zinc-300">${log.model_id}</td>
+              <td class="py-3 px-4">${projectBadge}</td>
+              <td class="py-3 px-4 font-mono text-zinc-300">${log.prompt_tokens} / ${log.completion_tokens} <span class="text-violet-400 font-semibold">(${log.total_tokens})</span></td>
+              <td class="py-3 px-4 font-mono text-zinc-300">${log.latency_ms} ms</td>
+            </tr>
+          `;
+        }).join('');
+      } catch (err) {
+        console.error("Failed to load audit logs", err);
+      }
+    }
+
+    // 2. Fetch GPU Nodes
+    async function fetchNodes() {
+      try {
+        const res = await apiFetch('/api/v1/nodes');
+        if (!res.ok) return;
+        const nodes = await res.json();
+        const container = document.getElementById('nodesContainer');
+
+        if (nodes.length === 0) {
+          container.innerHTML = `
+            <div class="col-span-2 bg-zinc-900 border border-dashed border-zinc-800 rounded-xl p-8 text-center text-zinc-500">
+              No GPU nodes registered. Start the Sovra Node Agent daemon to connect hardware.
+            </div>`;
+          return;
+        }
+
+        container.innerHTML = nodes.map(node => {
+          const usedVram = node.total_vram_mb - node.free_vram_mb;
+          const pct = node.total_vram_mb > 0 ? Math.round((usedVram / node.total_vram_mb) * 100) : 0;
+          return `
+            <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-4">
+              <div class="flex justify-between items-start">
+                <div>
+                  <div class="font-bold text-white text-base">${node.hostname}</div>
+                  <div class="text-xs text-zinc-400 font-mono mt-0.5">${node.ip_address} • ${node.gpu_name || 'Generic GPU'}</div>
+                </div>
+                <span class="px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-semibold flex items-center gap-1.5">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-dot"></span>
+                  ${node.status.toUpperCase()}
+                </span>
+              </div>
+
+              <div class="space-y-1.5">
+                <div class="flex justify-between text-xs text-zinc-400 font-mono">
+                  <span>VRAM Utilization</span>
+                  <span>${usedVram} / ${node.total_vram_mb} MB (${pct}%)</span>
+                </div>
+                <div class="w-full bg-zinc-950 rounded-full h-2 overflow-hidden border border-zinc-800">
+                  <div class="bg-gradient-to-r from-violet-600 to-indigo-500 h-2 rounded-full" style="width: ${pct}%"></div>
+                </div>
+              </div>
+
+              <div class="text-[11px] text-zinc-500 font-mono flex justify-between pt-1 border-t border-zinc-800/80">
+                <span>Node ID: ${node.id.slice(0, 12)}...</span>
+                <span>Heartbeat: ${new Date(node.last_heartbeat).toLocaleTimeString()}</span>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (err) {
+        console.error("Failed to load nodes", err);
+      }
+    }
+
+    // 3. Fetch Projects
+    async function fetchProjects() {
+      try {
+        const res = await apiFetch('/api/v1/projects');
+        if (!res.ok) return;
+        const projects = await res.json();
+        const tbody = document.getElementById('projectsTableBody');
+        const select = document.getElementById('keyProjectSelect');
+
+        select.innerHTML = '<option value="">None (Global Unscoped)</option>' +
+          projects.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+
+        if (projects.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="4" class="py-8 text-center text-zinc-500">No projects yet. Click "+ New Project" to add one!</td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = projects.map(p => `
+          <tr class="hover:bg-zinc-850/50 transition-colors">
+            <td class="py-3 px-4 font-semibold text-white">${p.name}</td>
+            <td class="py-3 px-4 text-zinc-400">${p.description || '—'}</td>
+            <td class="py-3 px-4 font-mono text-zinc-500 text-xs">${p.id}</td>
+            <td class="py-3 px-4 text-zinc-400">${new Date(p.created_at).toLocaleDateString()}</td>
+          </tr>
+        `).join('');
+      } catch (err) {
+        console.error("Failed to load projects", err);
+      }
+    }
+
+    // 4. Fetch Keys
+    async function fetchKeys() {
+      try {
+        const res = await apiFetch('/api/v1/api-keys');
+        if (!res.ok) return;
+        const keys = await res.json();
+        const tbody = document.getElementById('keysTableBody');
+
+        if (keys.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-zinc-500">No API keys generated yet.</td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = keys.map(k => {
+          const statusBadge = k.is_active 
+            ? `<span class="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">ACTIVE</span>`
+            : `<span class="px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-500 border border-zinc-700">REVOKED</span>`;
+
+          const roleBadge = `<span class="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 font-mono">${k.role}</span>`;
+          const projText = k.project_id ? `<span class="font-mono text-blue-400">${k.project_id.slice(0, 8)}...</span>` : `<span class="text-zinc-600">Global</span>`;
+
+          const actionBtn = k.is_active 
+            ? `<button onclick="revokeKey('${k.id}')" class="px-2.5 py-1 rounded bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 font-medium">Revoke</button>`
+            : `<span class="text-zinc-600">—</span>`;
+
+          return `
+            <tr class="hover:bg-zinc-850/50 transition-colors">
+              <td class="py-3 px-4 font-semibold text-white">${k.name}</td>
+              <td class="py-3 px-4 font-mono text-violet-400">${k.prefix}...</td>
+              <td class="py-3 px-4">${roleBadge}</td>
+              <td class="py-3 px-4">${projText}</td>
+              <td class="py-3 px-4">${statusBadge}</td>
+              <td class="py-3 px-4 text-right">${actionBtn}</td>
+            </tr>
+          `;
+        }).join('');
+      } catch (err) {
+        console.error("Failed to load keys", err);
+      }
+    }
+
+    // Modal Operations
+    function openModal(id) {
+      document.getElementById(id).classList.remove('hidden');
+    }
+    function closeModal(id) {
+      document.getElementById(id).classList.add('hidden');
+    }
+
+    // Submit Project Creation
+    async function submitCreateProject() {
+      const name = document.getElementById('projNameInput').value.trim();
+      const desc = document.getElementById('projDescInput').value.trim();
+      if (!name) return alert("Please enter a project name.");
+
+      const res = await apiFetch('/api/v1/projects', {
+        method: 'POST',
+        body: JSON.stringify({ name, description: desc })
+      });
+      if (res.ok) {
+        closeModal('modalCreateProject');
+        document.getElementById('projNameInput').value = '';
+        document.getElementById('projDescInput').value = '';
+        showToast("Project created successfully!", "success");
+        fetchProjects();
+      }
+    }
+
+    // Submit API Key Minting
+    async function submitCreateKey() {
+      const name = document.getElementById('keyNameInput').value.trim();
+      const projectId = document.getElementById('keyProjectSelect').value || null;
+      const role = document.getElementById('keyRoleSelect').value;
+      if (!name) return alert("Please enter an API key name.");
+
+      const res = await apiFetch('/api/v1/api-keys', {
+        method: 'POST',
+        body: JSON.stringify({ name, project_id: projectId, role })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        closeModal('modalCreateKey');
+        document.getElementById('keyNameInput').value = '';
+        document.getElementById('newKeyPlain').innerText = data.api_key;
+        openModal('modalKeySuccess');
+        fetchKeys();
+        // Also populate playground key for instant testing convenience
+        document.getElementById('playgroundKey').value = data.api_key;
+      }
+    }
+
+    async function revokeKey(keyId) {
+      if (!confirm("Are you sure you want to revoke this API key? This action is immediate.")) return;
+      const res = await apiFetch(`/api/v1/api-keys/${keyId}`, { method: 'DELETE' });
+      if (res.ok) {
+        showToast("API key revoked instantly", "success");
+        fetchKeys();
+      }
+    }
+
+    function copySecretKey() {
+      const key = document.getElementById('newKeyPlain').innerText;
+      navigator.clipboard.writeText(key);
+      showToast("Key copied to clipboard", "success");
+    }
+
+    // 5. Playground Inference
+    async function runInference() {
+      const model = document.getElementById('playgroundModel').value;
+      const apiKey = document.getElementById('playgroundKey').value.trim();
+      const temp = parseFloat(document.getElementById('playgroundTemp').value);
+      const prompt = document.getElementById('playgroundPrompt').value.trim();
+
+      if (!apiKey) return alert("Please provide or generate an API key first.");
+      if (!prompt) return alert("Please enter a prompt.");
+
+      const btn = document.getElementById('playgroundBtn');
+      const resArea = document.getElementById('playgroundResponse');
+      const statusBadge = document.getElementById('playgroundStatus');
+      const meta = document.getElementById('playgroundMeta');
+
+      btn.disabled = true;
+      btn.innerText = "Routing to Gateway...";
+      statusBadge.innerHTML = `<span class="text-amber-400 font-mono animate-pulse">Processing...</span>`;
+
+      const startTime = performance.now();
+      try {
+        const res = await fetch(`${GATEWAY_BASE}/v1/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: [{ role: "user", content: prompt }],
+            temperature: temp
+          })
+        });
+
+        const elapsed = Math.round(performance.now() - startTime);
+        const data = await res.json();
+
+        if (res.ok) {
+          statusBadge.innerHTML = `<span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono text-xs">200 OK</span>`;
+          meta.innerText = `Latency: ${elapsed}ms | Model: ${model}`;
+          const content = data.choices?.[0]?.message?.content || JSON.stringify(data, null, 2);
+          resArea.innerText = content;
+          showToast("Inference completed successfully!", "success");
+        } else {
+          statusBadge.innerHTML = `<span class="px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 font-mono text-xs">${res.status} ERROR</span>`;
+          meta.innerText = `Failed in ${elapsed}ms`;
+          resArea.innerText = JSON.stringify(data, null, 2);
+        }
+      } catch (err) {
+        statusBadge.innerHTML = `<span class="text-red-400 font-mono text-xs">NETWORK ERROR</span>`;
+        resArea.innerText = `Could not reach AI Gateway on ${GATEWAY_BASE}.\nError: ${err.message}`;
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "Send to AI Gateway";
+        // Refresh trace log if in background
+        fetchMetricsOverview();
+      }
+    }
+
+    function showToast(msg, type = "info") {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      const bg = type === 'success' ? 'bg-zinc-900 border-emerald-500/40 text-emerald-300' : 'bg-zinc-900 border-red-500/40 text-red-300';
+      toast.className = `${bg} border px-4 py-2.5 rounded-xl text-xs shadow-2xl flex items-center space-x-2 transition-all transform duration-300`;
+      toast.innerHTML = `<span>${msg}</span>`;
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+      }, 3500);
+    }
+
+    // Auto-refresh data every 5 seconds
+    setInterval(() => {
+      fetchCurrentTabData();
+    }, 5000);
+
+    // Initial Load
+    initTokenInput();
+    switchTab('observability');
+  </script>
+</body>
+</html>

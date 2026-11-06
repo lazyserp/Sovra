@@ -19,3 +19,7 @@ build/
 
 # Environment & local secrets
 .env
+
+# Database
+*.db
+*.sqlite

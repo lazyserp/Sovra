@@ -1,11 +1,12 @@
 import httpx
 import time
 from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from core.db.session import get_db
+from core.db.session import get_db, init_db
 from core.gateway.schema import ChatCompletionRequest
 from core.db.models import ApiKeyRecord, AuditLogRecord, DeploymentRecord
 from core.security.keys import verify_api_key
@@ -15,6 +16,15 @@ rate_limiter = InMemoryRateLimiter(requests_per_minute=60,burst=10)
 bearer_scheme = HTTPBearer(auto_error=False)
 
 app = FastAPI(title="Sovra AI Gateway", version="0.1.0")
+init_db()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def get_current_api_key(credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme) , db: Session = Depends(get_db)) -> ApiKeyRecord:

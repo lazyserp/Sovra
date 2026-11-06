@@ -52,7 +52,7 @@ def client_with_gateway_db():
             id="deploy-active-1",
             model_id="qwen-2.5-0.5b-instruct",
             node_id="node-test",
-            port=8000,
+            port=18999,
             status="running",
         )
         api_key = ApiKeyRecord(
@@ -201,7 +201,7 @@ def test_chat_completions_forward_success_records_telemetry(client_with_gateway_
     mock_response = httpx.Response(
         status_code=200,
         json=mock_engine_response,
-        request=httpx.Request("POST", "http://localhost:8000/v1/chat/completions"),
+        request=httpx.Request("POST", "http://localhost:18999/v1/chat/completions"),
     )
 
     payload = {
@@ -314,7 +314,7 @@ def test_chat_completions_audit_log_stamps_project_id(client_with_gateway_db: Te
     mock_response = httpx.Response(
         status_code=200,
         json=mock_engine_response,
-        request=httpx.Request("POST", "http://localhost:8000/v1/chat/completions"),
+        request=httpx.Request("POST", "http://localhost:18999/v1/chat/completions"),
     )
 
     with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:

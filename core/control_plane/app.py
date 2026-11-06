@@ -4,7 +4,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
 from fastapi import Depends, FastAPI, HTTPException, status
-from sqlalchemy import select
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from core.control_plane.schemas import (
@@ -14,11 +16,20 @@ from core.control_plane.schemas import (
     NodeRegisterRequest,
     ProjectCreateRequest,ProjectResponse
 )
-from core.db.models import ApiKeyRecord, NodeRecord, ProjectRecord
-from core.db.session import get_db
+from core.db.models import ApiKeyRecord, AuditLogRecord, NodeRecord, ProjectRecord
+from core.db.session import get_db,init_db
 from core.security.keys import generate_api_key
 
 app = FastAPI(title="Sovra Control Plane", version="0.1.0")
+init_db()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 load_dotenv()
 
@@ -192,5 +203,71 @@ def create_project(request: ProjectCreateRequest, db: Session = Depends(get_db))
 @app.get("/api/v1/projects", status_code=status.HTTP_200_OK, dependencies=[Depends(verify_admin_token)], response_model=list[ProjectResponse])
 def get_all_projects(db: Session = Depends(get_db)):
     return db.scalars(select(ProjectRecord)).all()
+
+
+@app.get("/api/v1/audit-logs", dependencies=[Depends(verify_admin_token)])
+def list_audit_logs(limit: int = 100, db: Session = Depends(get_db)):
+    """Fetch recent inference trace & audit events for Langfuse-style observability."""
+    stmt = select(AuditLogRecord).order_by(AuditLogRecord.created_at.desc()).limit(limit)
+    records = db.scalars(stmt).all()
+    return [
+        {
+            "id": r.id,
+            "api_key_id": r.api_key_id,
+            "project_id": r.project_id,
+            "model_id": r.model_id,
+            "prompt_tokens": r.prompt_tokens,
+            "completion_tokens": r.completion_tokens,
+            "total_tokens": r.total_tokens,
+            "latency_ms": r.latency_ms,
+            "status_code": r.status_code,
+            "error_message": r.error_message,
+            "created_at": r.created_at.isoformat(),
+        }
+        for r in records
+    ]
+
+
+@app.get("/api/v1/metrics/overview", dependencies=[Depends(verify_admin_token)])
+def get_metrics_overview(db: Session = Depends(get_db)):
+    """Aggregate cluster metrics for dashboard analytics."""
+    total_requests = db.scalar(select(func.count(AuditLogRecord.id))) or 0
+    total_tokens = db.scalar(select(func.sum(AuditLogRecord.total_tokens))) or 0
+    avg_latency = db.scalar(select(func.avg(AuditLogRecord.latency_ms))) or 0.0
+    active_nodes = db.scalar(select(func.count(NodeRecord.id)).where(NodeRecord.status == "online")) or 0
+    total_projects = db.scalar(select(func.count(ProjectRecord.id))) or 0
+    total_keys = db.scalar(select(func.count(ApiKeyRecord.id)).where(ApiKeyRecord.is_active == True)) or 0
+    error_count = db.scalar(select(func.count(AuditLogRecord.id)).where(AuditLogRecord.status_code >= 400)) or 0
+
+    return {
+        "total_requests": total_requests,
+        "total_tokens": int(total_tokens),
+        "avg_latency_ms": round(float(avg_latency), 2),
+        "error_count": error_count,
+        "active_nodes": active_nodes,
+        "total_projects": total_projects,
+        "total_keys": total_keys,
+        "data_egress_bytes": 0,
+        "air_gapped": True,
+    }
+
+
+CONSOLE_FILE_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "console", "index.html")
+)
+
+
+@app.get("/", response_class=HTMLResponse)
+@app.get("/console", response_class=HTMLResponse)
+def serve_console():
+    """Serve the Sovra Enterprise Observability & Management Console UI."""
+    if not os.path.exists(CONSOLE_FILE_PATH):
+        return HTMLResponse(
+            "<h2>Sovra Console is initializing... Please create core/console/index.html</h2>",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    with open(CONSOLE_FILE_PATH, "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
 
 

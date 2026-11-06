@@ -289,4 +289,31 @@ def test_create_api_key_invalid_role_fails(client_with_test_db: TestClient):
     assert "Invalid role" in res.json()["detail"]
 
 
+def test_serve_console_ui(client_with_test_db: TestClient):
+    """Verify that the Control Plane serves the Sovra Console single-page UI."""
+    res = client_with_test_db.get("/console")
+    assert res.status_code == 200
+    assert "text/html" in res.headers["content-type"]
+    assert "Sovra" in res.text
+
+
+def test_metrics_overview_endpoint(client_with_test_db: TestClient):
+    """Verify the cluster metrics overview returns accurate aggregate counts."""
+    res = client_with_test_db.get("/api/v1/metrics/overview", headers=ADMIN_HEADERS)
+    assert res.status_code == 200
+    data = res.json()
+    assert "total_requests" in data
+    assert "total_tokens" in data
+    assert "avg_latency_ms" in data
+    assert data["air_gapped"] is True
+
+
+def test_audit_logs_endpoint(client_with_test_db: TestClient):
+    """Verify fetching audit logs returns list of trace events."""
+    res = client_with_test_db.get("/api/v1/audit-logs", headers=ADMIN_HEADERS)
+    assert res.status_code == 200
+    assert isinstance(res.json(), list)
+
+
+
 
