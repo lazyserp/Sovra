@@ -126,3 +126,60 @@ def test_list_nodes(client_with_test_db: TestClient):
     node_ids = [n["id"] for n in response.json()]
     assert "node-a" in node_ids
     assert "node-b" in node_ids
+
+
+def test_create_api_key(client_with_test_db: TestClient):
+    """Verify creating an API key returns 201 with the plain secret key and safe prefix."""
+    payload = {"name": "analytics-service", "expires_in_days": 7}
+    response = client_with_test_db.post("/api/v1/api-keys", json=payload)
+    assert response.status_code == 201
+
+    data = response.json()
+    assert data["name"] == "analytics-service"
+    assert data["api_key"].startswith("sovra_sk_live_")
+    assert data["prefix"] == data["api_key"][:16]
+    assert data["expires_at"] is not None
+
+
+def test_list_api_keys_safe_metadata(client_with_test_db: TestClient):
+    """Verify listing keys returns safe metadata and never leaks plain secret or raw hash."""
+    client_with_test_db.post("/api/v1/api-keys", json={"name": "finance-bot"})
+
+    response = client_with_test_db.get("/api/v1/api-keys")
+    assert response.status_code == 200
+
+    keys = response.json()
+    assert len(keys) == 1
+    key_entry = keys[0]
+
+    assert key_entry["name"] == "finance-bot"
+    assert key_entry["is_active"] is True
+    assert "prefix" in key_entry
+
+    # Security assertion: Neither the plaintext secret nor the raw SHA-256 hash must EVER be returned
+    assert "api_key" not in key_entry
+    assert "key_hash" not in key_entry
+
+
+def test_revoke_api_key(client_with_test_db: TestClient):
+    """Verify revoking an API key sets is_active=False immediately."""
+    create_res = client_with_test_db.post("/api/v1/api-keys", json={"name": "to-be-revoked"})
+    key_id = create_res.json()["id"]
+
+    # Revoke
+    del_res = client_with_test_db.delete(f"/api/v1/api-keys/{key_id}")
+    assert del_res.status_code == 200
+    assert del_res.json() == {"status": "revoked", "id": key_id}
+
+    # Verify status in list
+    list_res = client_with_test_db.get("/api/v1/api-keys")
+    revoked_key = [k for k in list_res.json() if k["id"] == key_id][0]
+    assert revoked_key["is_active"] is False
+
+
+def test_revoke_api_key_not_found(client_with_test_db: TestClient):
+    """Verify revoking a non-existent key returns 404."""
+    del_res = client_with_test_db.delete("/api/v1/api-keys/fake-uuid-123")
+    assert del_res.status_code == 404
+    assert "not found" in del_res.json()["detail"]
+

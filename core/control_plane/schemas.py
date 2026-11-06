@@ -1,4 +1,5 @@
-from pydantic import BaseModel
+from datetime import datetime
+from pydantic import BaseModel, ConfigDict
 
 
 class NodeRegisterRequest(BaseModel):
@@ -16,6 +17,22 @@ class NodeHeartbeatRequest(BaseModel):
 
 
 class DeploymentCreateRequest(BaseModel):
-    model_id : str
-    node_id : str
+    model_id: str
+    node_id: str
     port: int | None = None
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: str
+    expires_in_days: int | None = None
+
+
+class ApiKeyResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    prefix: str
+    is_active: bool
+    created_at: datetime
+    expires_at: datetime | None = None
