@@ -13,6 +13,7 @@ from core.db.models import (
     DeploymentRecord,
     ModelRecord,
     NodeRecord,
+    ProjectRecord,
 )
 from core.db.session import get_db, init_db
 from core.gateway.app import app
@@ -276,4 +277,64 @@ def test_chat_completions_rate_limit_exceeded_returns_429(client_with_gateway_db
     rate_limiter.capacity = 10.0
     rate_limiter.rate = 1.0
     rate_limiter._buckets.clear()
+
+
+def test_chat_completions_audit_log_stamps_project_id(client_with_gateway_db: TestClient):
+    """Verify inference audit logs record the caller's project_id for tenant telemetry & billing."""
+    project_key_plain = "sovra_sk_live_project_scoped_secret_9999"
+    project_headers = {"Authorization": f"Bearer {project_key_plain}"}
+
+    with client_with_gateway_db.session_factory() as session:
+        project = ProjectRecord(id="proj-finance-101", name="Finance AI Team")
+        key_record = ApiKeyRecord(
+            name="finance-key",
+            key_hash=hash_key(project_key_plain),
+            prefix=project_key_plain[:16],
+            project_id="proj-finance-101",
+            role="inference",
+            is_active=True,
+        )
+        session.add_all([project, key_record])
+        session.commit()
+
+    payload = {
+        "model": "qwen-2.5-0.5b-instruct",
+        "messages": [{"role": "user", "content": "Calculate Q3 risk metrics."}],
+    }
+
+    mock_engine_response = {
+        "id": "chatcmpl-test-project",
+        "object": "chat.completion",
+        "created": 1700000000,
+        "model": "qwen-2.5-0.5b-instruct",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "Done."}}],
+        "usage": {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20},
+    }
+
+    mock_response = httpx.Response(
+        status_code=200,
+        json=mock_engine_response,
+        request=httpx.Request("POST", "http://localhost:8000/v1/chat/completions"),
+    )
+
+    with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_response
+
+        res = client_with_gateway_db.post("/v1/chat/completions", json=payload, headers=project_headers)
+        assert res.status_code == 200
+
+    # Verify audit log recorded the exact project_id
+    with client_with_gateway_db.session_factory() as session:
+        log = session.scalar(
+            select(AuditLogRecord).where(
+                AuditLogRecord.project_id == "proj-finance-101",
+            )
+        )
+        assert log is not None
+        assert log.api_key_id == key_record.id
+        assert log.model_id == "qwen-2.5-0.5b-instruct"
+        assert log.prompt_tokens == 12
+        assert log.completion_tokens == 8
+        assert log.total_tokens == 20
+
 

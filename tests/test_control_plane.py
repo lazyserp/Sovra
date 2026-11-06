@@ -208,3 +208,85 @@ def test_revoke_api_key_not_found(client_with_test_db: TestClient):
     assert "not found" in del_res.json()["detail"]
 
 
+def test_create_project_success(client_with_test_db: TestClient):
+    """Verify admin can create an isolated project workspace."""
+    payload = {"name": "Risk Analysis", "description": "Banking fraud & risk models"}
+    res = client_with_test_db.post("/api/v1/projects", json=payload, headers=ADMIN_HEADERS)
+    assert res.status_code == 201
+
+    data = res.json()
+    assert data["name"] == "Risk Analysis"
+    assert data["description"] == "Banking fraud & risk models"
+    assert "id" in data
+    assert "created_at" in data
+
+
+def test_create_project_unauthorized(client_with_test_db: TestClient):
+    """Verify project creation requires admin authorization."""
+    payload = {"name": "Unauthorized Project"}
+    res = client_with_test_db.post("/api/v1/projects", json=payload)
+    assert res.status_code == 401
+
+
+def test_list_projects(client_with_test_db: TestClient):
+    """Verify admin can list all registered projects."""
+    client_with_test_db.post("/api/v1/projects", json={"name": "Project Alpha"}, headers=ADMIN_HEADERS)
+    client_with_test_db.post("/api/v1/projects", json={"name": "Project Beta"}, headers=ADMIN_HEADERS)
+
+    res = client_with_test_db.get("/api/v1/projects", headers=ADMIN_HEADERS)
+    assert res.status_code == 200
+    projects = res.json()
+    names = [p["name"] for p in projects]
+    assert "Project Alpha" in names
+    assert "Project Beta" in names
+
+
+def test_create_api_key_with_project_and_role(client_with_test_db: TestClient):
+    """Verify creating an API key scoped to a project and assigned a specific role."""
+    proj_res = client_with_test_db.post("/api/v1/projects", json={"name": "Healthcare AI"}, headers=ADMIN_HEADERS)
+    project_id = proj_res.json()["id"]
+
+    payload = {
+        "name": "clinic-bot-key",
+        "project_id": project_id,
+        "role": "operator",
+        "expires_in_days": 30,
+    }
+    key_res = client_with_test_db.post("/api/v1/api-keys", json=payload, headers=ADMIN_HEADERS)
+    assert key_res.status_code == 201
+
+    key_data = key_res.json()
+    assert key_data["project_id"] == project_id
+    assert key_data["role"] == "operator"
+
+    # Verify listing also includes project_id and role
+    list_res = client_with_test_db.get("/api/v1/api-keys", headers=ADMIN_HEADERS)
+    match = [k for k in list_res.json() if k["id"] == key_data["id"]][0]
+    assert match["project_id"] == project_id
+    assert match["role"] == "operator"
+
+
+def test_create_api_key_invalid_project_fails(client_with_test_db: TestClient):
+    """Verify creating a key referencing a non-existent project returns 404."""
+    payload = {
+        "name": "orphan-key",
+        "project_id": "non-existent-project-id",
+        "role": "inference",
+    }
+    res = client_with_test_db.post("/api/v1/api-keys", json=payload, headers=ADMIN_HEADERS)
+    assert res.status_code == 404
+    assert "not found" in res.json()["detail"]
+
+
+def test_create_api_key_invalid_role_fails(client_with_test_db: TestClient):
+    """Verify creating a key with an unknown role returns 400."""
+    payload = {
+        "name": "bad-role-key",
+        "role": "super-admin-godmode",
+    }
+    res = client_with_test_db.post("/api/v1/api-keys", json=payload, headers=ADMIN_HEADERS)
+    assert res.status_code == 400
+    assert "Invalid role" in res.json()["detail"]
+
+
+
