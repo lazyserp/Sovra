@@ -25,6 +25,8 @@ class DeploymentCreateRequest(BaseModel):
 class ApiKeyCreateRequest(BaseModel):
     name: str
     expires_in_days: int | None = None
+    role: str = "inference"  # 'admin', 'operator', or 'inference'
+    project_id: str | None = None
 
 
 class ApiKeyResponse(BaseModel):
@@ -33,6 +35,21 @@ class ApiKeyResponse(BaseModel):
     id: str
     name: str
     prefix: str
+    project_id: str | None = None
+    role: str = "inference"
     is_active: bool
     created_at: datetime
     expires_at: datetime | None = None
+
+class ProjectCreateRequest(BaseModel):
+    name: str
+    description: str | None = None
+
+
+class ProjectResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    description: str | None = None
+    created_at: datetime

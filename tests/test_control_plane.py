@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import Session, sessionmaker
 
-from core.control_plane.app import app
+from core.control_plane.app import SOVRA_ADMIN_TOKEN, app
 from core.db.models import Base
 from core.db.session import get_db, init_db
 
@@ -128,10 +128,34 @@ def test_list_nodes(client_with_test_db: TestClient):
     assert "node-b" in node_ids
 
 
+ADMIN_HEADERS = {"Authorization": f"Bearer {SOVRA_ADMIN_TOKEN}"}
+
+
+def test_admin_routes_missing_token_returns_401(client_with_test_db: TestClient):
+    """Verify admin endpoints reject requests with missing Authorization header."""
+    res_post = client_with_test_db.post("/api/v1/api-keys", json={"name": "test"})
+    assert res_post.status_code == 401
+    assert "Missing Authorization header" in res_post.json()["detail"]
+
+    res_get = client_with_test_db.get("/api/v1/api-keys")
+    assert res_get.status_code == 401
+
+    res_del = client_with_test_db.delete("/api/v1/api-keys/some-id")
+    assert res_del.status_code == 401
+
+
+def test_admin_routes_invalid_token_returns_403(client_with_test_db: TestClient):
+    """Verify admin endpoints reject requests with invalid/wrong admin token."""
+    bad_headers = {"Authorization": "Bearer totally-wrong-admin-token"}
+    response = client_with_test_db.get("/api/v1/api-keys", headers=bad_headers)
+    assert response.status_code == 403
+    assert "Forbidden" in response.json()["detail"]
+
+
 def test_create_api_key(client_with_test_db: TestClient):
     """Verify creating an API key returns 201 with the plain secret key and safe prefix."""
     payload = {"name": "analytics-service", "expires_in_days": 7}
-    response = client_with_test_db.post("/api/v1/api-keys", json=payload)
+    response = client_with_test_db.post("/api/v1/api-keys", json=payload, headers=ADMIN_HEADERS)
     assert response.status_code == 201
 
     data = response.json()
@@ -143,9 +167,9 @@ def test_create_api_key(client_with_test_db: TestClient):
 
 def test_list_api_keys_safe_metadata(client_with_test_db: TestClient):
     """Verify listing keys returns safe metadata and never leaks plain secret or raw hash."""
-    client_with_test_db.post("/api/v1/api-keys", json={"name": "finance-bot"})
+    client_with_test_db.post("/api/v1/api-keys", json={"name": "finance-bot"}, headers=ADMIN_HEADERS)
 
-    response = client_with_test_db.get("/api/v1/api-keys")
+    response = client_with_test_db.get("/api/v1/api-keys", headers=ADMIN_HEADERS)
     assert response.status_code == 200
 
     keys = response.json()
@@ -163,23 +187,24 @@ def test_list_api_keys_safe_metadata(client_with_test_db: TestClient):
 
 def test_revoke_api_key(client_with_test_db: TestClient):
     """Verify revoking an API key sets is_active=False immediately."""
-    create_res = client_with_test_db.post("/api/v1/api-keys", json={"name": "to-be-revoked"})
+    create_res = client_with_test_db.post("/api/v1/api-keys", json={"name": "to-be-revoked"}, headers=ADMIN_HEADERS)
     key_id = create_res.json()["id"]
 
     # Revoke
-    del_res = client_with_test_db.delete(f"/api/v1/api-keys/{key_id}")
+    del_res = client_with_test_db.delete(f"/api/v1/api-keys/{key_id}", headers=ADMIN_HEADERS)
     assert del_res.status_code == 200
     assert del_res.json() == {"status": "revoked", "id": key_id}
 
     # Verify status in list
-    list_res = client_with_test_db.get("/api/v1/api-keys")
+    list_res = client_with_test_db.get("/api/v1/api-keys", headers=ADMIN_HEADERS)
     revoked_key = [k for k in list_res.json() if k["id"] == key_id][0]
     assert revoked_key["is_active"] is False
 
 
 def test_revoke_api_key_not_found(client_with_test_db: TestClient):
     """Verify revoking a non-existent key returns 404."""
-    del_res = client_with_test_db.delete("/api/v1/api-keys/fake-uuid-123")
+    del_res = client_with_test_db.delete("/api/v1/api-keys/fake-uuid-123", headers=ADMIN_HEADERS)
     assert del_res.status_code == 404
     assert "not found" in del_res.json()["detail"]
+
 

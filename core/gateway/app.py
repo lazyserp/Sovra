@@ -78,6 +78,7 @@ async def chat_completions(
         audit_log = AuditLogRecord(
             api_key_id=api_key.id,
             model_id=request.model,
+            project_id=api_key.project_id,
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             error_message=f"Rate limit exceeded. Retry after {retry_after}s.",
         )
@@ -96,6 +97,7 @@ async def chat_completions(
             api_key_id=api_key.id,
             model_id=request.model,
             status_code=status.HTTP_404_NOT_FOUND,
+            project_id=api_key.project_id,
             error_message=f"Model {request.model} is not currently running"
         )
         db.add(audit_log)
@@ -127,6 +129,7 @@ async def chat_completions(
                 completion_tokens=usage.get("completion_tokens", 0),
                 total_tokens=usage.get("total_tokens", 0),
                 latency_ms=round(latency_ms, 2),
+                project_id=api_key.project_id,
                 status_code=response.status_code,
             )
             db.add(audit_log)
@@ -140,6 +143,7 @@ async def chat_completions(
                 api_key_id=api_key.id,
                 model_id=request.model,
                 latency_ms=round(latency_ms, 2),
+                project_id=api_key.project_id,
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 error_message=f"Inference engine for '{request.model}' on port {deployment.port} is unreachable.",
             )

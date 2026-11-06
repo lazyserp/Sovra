@@ -64,28 +64,29 @@ class DeploymentRecord(Base):
         default=lambda: datetime.now(timezone.utc),
     )
 
+class ProjectRecord(Base):
+    """Represents an isolated tenant, department, or project in Sovra."""
+    __tablename__ = "projects"
+
+    id: Mapped[str] = mapped_column(String,primary_key=True,default= lambda: str(uuid.uuid4()),)
+    name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),default=lambda: datetime.now(timezone.utc),)
+
 class ApiKeyRecord(Base):
     """Represents an API authentication key for accessing Sovra AI endpoints."""
     __tablename__ = "api_keys"
 
-    id: Mapped[str] = mapped_column(
-        String,
-        primary_key=True,
-        default=lambda: str(uuid.uuid4()),
-    )
+    id: Mapped[str] = mapped_column(String,primary_key=True,default=lambda: str(uuid.uuid4()),)
     name: Mapped[str] = mapped_column(String, nullable=False)
     key_hash: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     prefix: Mapped[str] = mapped_column(String, nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True)
-    expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-        default=None,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),nullable=True,default=None,)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),default=lambda: datetime.now(timezone.utc),)
+
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"),nullable=True,index=True,)
+    role: Mapped[str] = mapped_column(String, default="inference")
 
 
 class AuditLogRecord(Base):
@@ -102,3 +103,5 @@ class AuditLogRecord(Base):
     status_code: Mapped[int] = mapped_column(default=200)
     error_message: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),default=lambda: datetime.now(timezone.utc),index=True)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"),nullable=True,index=True,)
+
