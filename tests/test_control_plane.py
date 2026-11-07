@@ -315,5 +315,95 @@ def test_audit_logs_endpoint(client_with_test_db: TestClient):
     assert isinstance(res.json(), list)
 
 
+def test_create_and_list_deployments(client_with_test_db: TestClient):
+    """Verify deploying a model creates the model, node, and deployment records."""
+    payload = {
+        "model_id": "qwen2.5-coder:7b",
+        "name": "Qwen 2.5 Coder 7B",
+        "engine_type": "ollama",
+        "port": 11434,
+    }
+    # 1. Create deployment
+    res = client_with_test_db.post("/api/v1/deployments", json=payload, headers=ADMIN_HEADERS)
+    assert res.status_code == 201
+    data = res.json()
+    assert data["model_id"] == "qwen2.5-coder:7b"
+    assert data["status"] == "running"
+    deploy_id = data["id"]
+
+    # 2. List deployments
+    res_list = client_with_test_db.get("/api/v1/deployments", headers=ADMIN_HEADERS)
+    assert res_list.status_code == 200
+    deployments = res_list.json()
+    assert len(deployments) == 1
+    assert deployments[0]["model_id"] == "qwen2.5-coder:7b"
+    assert deployments[0]["engine_type"] == "ollama"
+
+    # 3. Delete deployment
+    res_del = client_with_test_db.delete(f"/api/v1/deployments/{deploy_id}", headers=ADMIN_HEADERS)
+    assert res_del.status_code == 200
+    assert res_del.json()["status"] == "deleted"
+
+    # 4. List again should be empty
+    res_empty = client_with_test_db.get("/api/v1/deployments", headers=ADMIN_HEADERS)
+    assert len(res_empty.json()) == 0
+
+
+def test_verify_deployment_endpoint_healthy(client_with_test_db: TestClient):
+    """Verify live probing of a vLLM engine returns 200 and latency when engine is healthy."""
+    from unittest.mock import AsyncMock, patch
+    import httpx
+
+    mock_resp = httpx.Response(
+        200,
+        json={"data": [{"id": "Qwen/Qwen2.5-Coder-32B-Instruct"}]},
+        request=httpx.Request("GET", "http://10.240.0.15:8000/v1/models"),
+    )
+
+    with patch.object(httpx.AsyncClient, "get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_resp
+
+        payload = {"host": "10.240.0.15", "port": 8000, "engine_type": "vllm"}
+        res = client_with_test_db.post("/api/v1/deployments/verify", json=payload, headers=ADMIN_HEADERS)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "healthy"
+        assert "Qwen/Qwen2.5-Coder-32B-Instruct" in data["models_found"]
+
+
+def test_verify_deployment_endpoint_unreachable(client_with_test_db: TestClient):
+    """Verify probing an unreachable remote engine returns 502 with diagnostic detail."""
+    from unittest.mock import AsyncMock, patch
+    import httpx
+
+    with patch.object(httpx.AsyncClient, "get", new_callable=AsyncMock) as mock_get:
+        mock_get.side_effect = httpx.ConnectError("Connection refused")
+
+        payload = {"host": "10.240.0.99", "port": 8000, "engine_type": "vllm"}
+        res = client_with_test_db.post("/api/v1/deployments/verify", json=payload, headers=ADMIN_HEADERS)
+        assert res.status_code == 502
+        assert "Connection failed" in res.json()["detail"]
+
+
+def test_create_remote_linux_deployment(client_with_test_db: TestClient):
+    """Verify deploying to a remote Linux IP registers a remote NodeRecord and routes properly."""
+    payload = {
+        "model_id": "deepseek-ai/DeepSeek-V3",
+        "name": "DeepSeek V3 (Customer Cluster)",
+        "engine_type": "vllm",
+        "host": "10.0.1.50",
+        "port": 8000,
+    }
+    res = client_with_test_db.post("/api/v1/deployments", json=payload, headers=ADMIN_HEADERS)
+    assert res.status_code == 201
+
+    res_list = client_with_test_db.get("/api/v1/deployments", headers=ADMIN_HEADERS)
+    assert res_list.status_code == 200
+    deploys = res_list.json()
+    assert any(d["model_id"] == "deepseek-ai/DeepSeek-V3" and d["port"] == 8000 for d in deploys)
+
+
+
+
 
 

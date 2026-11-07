@@ -1,0 +1,58 @@
+services:
+  # 1. Enterprise PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: sovra-db
+    restart: always
+    environment:
+      POSTGRES_USER: sovra
+      POSTGRES_PASSWORD: sovra_secure_password_2026
+      POSTGRES_DB: sovra
+    ports:
+      - "5432:5432"
+    volumes:
+      - sovra_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sovra -d sovra"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Sovra Control Plane & Management Console
+  control-plane:
+    build: .
+    container_name: sovra-control-plane
+    restart: always
+    command: ["uvicorn", "core.control_plane.app:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "8001:8001"
+    environment:
+      DATABASE_URL: "postgresql://sovra:sovra_secure_password_2026@postgres:5432/sovra"
+      SOVRA_ADMIN_TOKEN: "sovra-master-secret-2026"
+      RUNNING_IN_DOCKER: "1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # 3. Sovra AI Gateway (OpenAI-compatible inference proxy)
+  gateway:
+    build: .
+    container_name: sovra-gateway
+    restart: always
+    command: ["uvicorn", "core.gateway.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: "postgresql://sovra:sovra_secure_password_2026@postgres:5432/sovra"
+      RUNNING_IN_DOCKER: "1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  sovra_pgdata:
+

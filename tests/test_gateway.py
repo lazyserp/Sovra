@@ -338,3 +338,111 @@ def test_chat_completions_audit_log_stamps_project_id(client_with_gateway_db: Te
         assert log.total_tokens == 20
 
 
+def test_chat_completions_streaming_sse_success(client_with_gateway_db: TestClient):
+    """Verify stream=True returns text/event-stream chunks and writes audit logs upon stream close."""
+    payload = {
+        "model": "qwen-2.5-0.5b-instruct",
+        "messages": [{"role": "user", "content": "Stream this code."}],
+        "stream": True,
+    }
+
+    sse_chunks = [
+        b'data: {"choices": [{"delta": {"content": "def "}}]}\n\n',
+        b'data: {"choices": [{"delta": {"content": "hello(): pass"}}]}\n\n',
+        b'data: [DONE]\n\n',
+    ]
+
+    class MockAsyncStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for chunk in sse_chunks:
+                yield chunk
+
+        async def aclose(self):
+            pass
+
+    mock_stream_response = httpx.Response(
+        status_code=200,
+        headers={"content-type": "text/event-stream"},
+        stream=MockAsyncStream(),
+        request=httpx.Request("POST", "http://localhost:18999/v1/chat/completions"),
+    )
+
+    with patch.object(httpx.AsyncClient, "send", new_callable=AsyncMock) as mock_send:
+        mock_send.return_value = mock_stream_response
+
+        res = client_with_gateway_db.post("/v1/chat/completions", json=payload, headers=AUTH_HEADERS)
+        assert res.status_code == 200
+        assert "text/event-stream" in res.headers["content-type"]
+        assert b"hello(): pass" in res.content
+
+    # Verify audit log recorded the stream completion
+    with client_with_gateway_db.session_factory() as session:
+        log = session.scalar(
+            select(AuditLogRecord).where(
+                AuditLogRecord.model_id == "qwen-2.5-0.5b-instruct",
+                AuditLogRecord.status_code == 200,
+            )
+        )
+        assert log is not None
+        assert log.latency_ms > 0
+
+
+def test_anthropic_messages_success_with_x_api_key(client_with_gateway_db: TestClient):
+    """Verify POST /v1/messages handles Anthropic protocol with x-api-key header."""
+    payload = {
+        "model": "qwen-2.5-0.5b-instruct",
+        "max_tokens": 100,
+        "messages": [{"role": "user", "content": "Hello via Claude Code"}],
+    }
+
+    mock_anthropic_response = {
+        "id": "msg_12345",
+        "type": "message",
+        "role": "assistant",
+        "model": "qwen-2.5-0.5b-instruct",
+        "content": [{"type": "text", "text": "Hello from Sovra Gateway!"}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 12, "output_tokens": 6},
+    }
+
+    anthropic_headers = {
+        "x-api-key": TEST_API_KEY,
+        "anthropic-version": "2023-06-01",
+    }
+
+    with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = httpx.Response(200, json=mock_anthropic_response)
+
+        res = client_with_gateway_db.post("/v1/messages", json=payload, headers=anthropic_headers)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["content"][0]["text"] == "Hello from Sovra Gateway!"
+        assert data["usage"]["output_tokens"] == 6
+
+    # Verify audit log recorded Anthropic token usage
+    with client_with_gateway_db.session_factory() as session:
+        log = session.scalar(
+            select(AuditLogRecord).where(
+                AuditLogRecord.model_id == "qwen-2.5-0.5b-instruct",
+                AuditLogRecord.total_tokens == 18,
+            )
+        )
+        assert log is not None
+        assert log.prompt_tokens == 12
+        assert log.completion_tokens == 6
+        assert log.status_code == 200
+
+
+def test_anthropic_messages_unauthorized_missing_key(client_with_gateway_db: TestClient):
+    """Verify POST /v1/messages returns 401 when missing authentication."""
+    payload = {
+        "model": "qwen-2.5-0.5b-instruct",
+        "max_tokens": 100,
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+    res = client_with_gateway_db.post("/v1/messages", json=payload)
+    assert res.status_code == 401
+
+
+
+

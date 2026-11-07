@@ -16,10 +16,30 @@ class NodeHeartbeatRequest(BaseModel):
     status: str = "online"
 
 
+class DeploymentVerifyRequest(BaseModel):
+    host: str = "127.0.0.1"
+    port: int = 8000
+    engine_type: str = "vllm"
+
+
 class DeploymentCreateRequest(BaseModel):
     model_id: str
+    node_id: str | None = None
+    host: str = "127.0.0.1"
+    port: int | None = 8000
+    engine_type: str = "vllm"
+    name: str | None = None
+
+
+class DeploymentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    model_id: str
     node_id: str
-    port: int | None = None
+    port: int
+    status: str
+    created_at: datetime
 
 
 class ApiKeyCreateRequest(BaseModel):

@@ -12,12 +12,23 @@ from sqlalchemy.orm import Session
 from core.control_plane.schemas import (
     ApiKeyCreateRequest,
     ApiKeyResponse,
+    DeploymentCreateRequest,
+    DeploymentResponse,
+    DeploymentVerifyRequest,
     NodeHeartbeatRequest,
     NodeRegisterRequest,
-    ProjectCreateRequest,ProjectResponse
+    ProjectCreateRequest,
+    ProjectResponse,
 )
-from core.db.models import ApiKeyRecord, AuditLogRecord, NodeRecord, ProjectRecord
-from core.db.session import get_db,init_db
+from core.db.models import (
+    ApiKeyRecord,
+    AuditLogRecord,
+    DeploymentRecord,
+    ModelRecord,
+    NodeRecord,
+    ProjectRecord,
+)
+from core.db.session import get_db, init_db
 from core.security.keys import generate_api_key
 
 app = FastAPI(title="Sovra Control Plane", version="0.1.0")
@@ -52,6 +63,14 @@ def verify_admin_token(
             detail="Forbidden: Invalid admin token.",
         )
     return True
+
+
+def resolve_target_host(host: str) -> str:
+    """Translate localhost/127.0.0.1 to host.docker.internal when executing inside Docker."""
+    if host in ["127.0.0.1", "localhost"]:
+        if os.path.exists("/.dockerenv") or os.environ.get("RUNNING_IN_DOCKER") == "1":
+            return "host.docker.internal"
+    return host
 
 @app.post("/api/v1/nodes/register")
 def register_node(request: NodeRegisterRequest, db: Session = Depends(get_db)):
@@ -250,6 +269,183 @@ def get_metrics_overview(db: Session = Depends(get_db)):
         "data_egress_bytes": 0,
         "air_gapped": True,
     }
+
+
+# ==========================================
+# Deployments & Model Management Routes
+# ==========================================
+@app.post("/api/v1/deployments/verify", dependencies=[Depends(verify_admin_token)])
+async def verify_deployment_endpoint(request: DeploymentVerifyRequest):
+    """Actively probe a remote (e.g. vLLM on Linux) or local inference engine to verify health."""
+    import httpx
+    import time
+    target_host = resolve_target_host(request.host)
+    target_base = f"http://{target_host}:{request.port}"
+    probe_urls = [
+        f"{target_base}/v1/models",
+        f"{target_base}/health",
+        f"{target_base}/api/tags",
+        f"{target_base}/",
+    ]
+
+    start = time.perf_counter()
+    async with httpx.AsyncClient(timeout=4.0) as client:
+        for url in probe_urls:
+            try:
+                res = await client.get(url)
+                if res.status_code in [200, 404]:
+                    latency_ms = round((time.perf_counter() - start) * 1000, 2)
+                    models_found = []
+                    if res.status_code == 200:
+                        try:
+                            data = res.json()
+                            if "data" in data and isinstance(data["data"], list):
+                                models_found = [m.get("id") for m in data["data"] if "id" in m]
+                            elif "models" in data and isinstance(data["models"], list):
+                                models_found = [m.get("name") for m in data["models"] if "name" in m]
+                        except Exception:
+                            pass
+                    return {
+                        "status": "healthy",
+                        "endpoint": target_base,
+                        "latency_ms": latency_ms,
+                        "probe_url": url,
+                        "models_found": models_found,
+                    }
+            except Exception:
+                continue
+
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail=f"Connection failed: Could not reach {request.engine_type.upper()} at {target_base}. Check network access, IP address, and firewall rules.",
+    )
+
+
+@app.post("/api/v1/deployments", response_model=DeploymentResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(verify_admin_token)])
+def create_deployment(request: DeploymentCreateRequest, db: Session = Depends(get_db)):
+    """Deploy or register an AI model bound to an active GPU node (local or remote Linux)."""
+    # 1. Resolve target Node
+    node = None
+    if request.node_id:
+        node = db.get(NodeRecord, request.node_id)
+        if not node:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Node '{request.node_id}' not found.",
+            )
+    else:
+        # Match node by host/IP or auto-create a node record for this remote/local machine
+        host = (request.host or "127.0.0.1").strip()
+        node = db.scalar(select(NodeRecord).where(NodeRecord.ip_address == host))
+        if not node:
+            is_local = host in ["127.0.0.1", "localhost"]
+            node_id = "node-local-pc" if is_local else f"node-{host.replace('.', '-')}"
+            node = NodeRecord(
+                id=node_id,
+                hostname=f"gpu-node-{host}",
+                ip_address=host,
+                gpu_name="NVIDIA GPU Cluster Node" if not is_local else "NVIDIA Local GPU",
+                total_vram_mb=24576 if not is_local else 4096,
+                free_vram_mb=22000 if not is_local else 3500,
+                status="online",
+            )
+            db.add(node)
+            db.commit()
+            db.refresh(node)
+
+    # 2. Register or update Model Record
+    model = db.get(ModelRecord, request.model_id)
+    if not model:
+        model = ModelRecord(
+            id=request.model_id,
+            name=request.name or request.model_id,
+            artifact_path=f"{request.engine_type}://{request.model_id}",
+            min_vram_mb=400,
+            engine_type=request.engine_type,
+        )
+        db.add(model)
+        db.commit()
+
+    # 3. Create or update Deployment Record
+    deploy_id = f"deploy-{request.model_id.replace(':', '-')}"
+    deployment = db.get(DeploymentRecord, deploy_id)
+    port = request.port or (11434 if request.engine_type == "ollama" else 8000)
+
+    if not deployment:
+        deployment = DeploymentRecord(
+            id=deploy_id,
+            model_id=request.model_id,
+            node_id=node.id,
+            port=port,
+            status="running",
+        )
+        db.add(deployment)
+    else:
+        deployment.node_id = node.id
+        deployment.port = port
+        deployment.status = "running"
+
+    db.commit()
+    db.refresh(deployment)
+    return deployment
+
+
+@app.get("/api/v1/deployments", dependencies=[Depends(verify_admin_token)])
+def list_deployments(db: Session = Depends(get_db)):
+    """List all deployed models, ports, and statuses."""
+    deployments = db.scalars(select(DeploymentRecord)).all()
+    results = []
+    for d in deployments:
+        model = db.get(ModelRecord, d.model_id)
+        node = db.get(NodeRecord, d.node_id)
+        results.append({
+            "id": d.id,
+            "model_id": d.model_id,
+            "model_name": model.name if model else d.model_id,
+            "engine_type": model.engine_type if model else "vllm",
+            "node_id": d.node_id,
+            "node_hostname": node.hostname if node else d.node_id,
+            "port": d.port,
+            "status": d.status,
+            "created_at": d.created_at.isoformat() if d.created_at else None,
+        })
+    return results
+
+
+@app.delete("/api/v1/deployments/{deployment_id}", dependencies=[Depends(verify_admin_token)])
+def delete_deployment(deployment_id: str, db: Session = Depends(get_db)):
+    """Undeploy or remove a model deployment."""
+    deployment = db.get(DeploymentRecord, deployment_id)
+    if not deployment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Deployment '{deployment_id}' not found.",
+        )
+    db.delete(deployment)
+    db.commit()
+    return {"status": "deleted", "id": deployment_id}
+
+
+@app.get("/api/v1/discover/ollama", dependencies=[Depends(verify_admin_token)])
+def discover_ollama_models(port: int = 11434, host: str = "127.0.0.1"):
+    """Scan local or host Ollama instance for pulled models ready for 1-click deployment."""
+    import httpx
+    target_host = resolve_target_host(host)
+    try:
+        r = httpx.get(f"http://{target_host}:{port}/api/tags", timeout=3.0)
+        if r.status_code == 200:
+            models = r.json().get("models", [])
+            return [
+                {
+                    "name": m.get("name"),
+                    "size_bytes": m.get("size", 0),
+                    "modified_at": m.get("modified_at"),
+                }
+                for m in models
+            ]
+        return []
+    except Exception:
+        return []
 
 
 CONSOLE_FILE_PATH = os.path.abspath(
